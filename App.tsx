@@ -25,6 +25,7 @@ const App: React.FC = () => {
   
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
   const [gameKey, setGameKey] = useState<number>(0);
+  const [isDelegationEnabled, setIsDelegationEnabled] = useState<boolean>(false); // New state for delegation toggle
 
   const initializeGameBlocks = useCallback(() => {
     setSelectedBlockDefinition(getRandomBlockDefinition());
@@ -62,6 +63,11 @@ const App: React.FC = () => {
     setGameKey(prevKey => prevKey + 1); 
   }, [initializeGameBlocks]);
 
+  const handleDelegationToggle = () => {
+    setIsDelegationEnabled(prev => !prev);
+    // Future logic for delegation mode can be added here
+  };
+
   useEffect(() => {
     if (isGameOver) {
       // Potentially show a modal or overlay
@@ -85,6 +91,7 @@ const App: React.FC = () => {
               onScoreUpdate={setCurrentScore}
               isGameOver={isGameOver}
               onBlockSuccessfullyPlaced={handleBlockSuccessfullyPlaced} // New prop
+              isDelegationEnabled={isDelegationEnabled} // Pass delegation state
             />
           )}
         </div>
@@ -109,6 +116,25 @@ const App: React.FC = () => {
                 </div>
               )}
               <NextBlockPreview definition={nextBlockDefinition} />
+              <div className="my-4 p-3 bg-white/10 backdrop-blur-sm rounded-lg shadow-md">
+                <label htmlFor="delegationToggle" className="flex items-center justify-between cursor-pointer">
+                  <span className="text-lg font-medium text-white">위임 모드</span>
+                  <div className="relative">
+                    <input 
+                      type="checkbox" 
+                      id="delegationToggle" 
+                      className="sr-only peer" 
+                      checked={isDelegationEnabled} 
+                      onChange={handleDelegationToggle}
+                      aria-label="위임 모드 토글"
+                    />
+                    <div className="w-12 h-7 bg-gray-400 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-green-500"></div>
+                  </div>
+                </label>
+                 {isDelegationEnabled && (
+                    <p className="text-xs text-sky-200 mt-2 text-center">위임 모드 활성: 블록이 자동으로 배치됩니다.</p>
+                 )}
+              </div>
             </>
           ) : (
             <div className="text-center p-4 bg-red-500/80 rounded-md">
@@ -124,7 +150,7 @@ const App: React.FC = () => {
           )}
            <button
             onClick={handleRestart}
-            className="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-150 shadow-md"
+            className="w-full mt-auto bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-150 shadow-md"
             aria-label="게임 초기화"
           >
             게임 초기화

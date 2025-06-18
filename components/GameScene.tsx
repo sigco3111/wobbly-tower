@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
@@ -50,6 +51,7 @@ interface GameSceneProps {
   onScoreUpdate: (score: number) => void;
   isGameOver: boolean;
   onBlockSuccessfullyPlaced: () => void;
+  isDelegationEnabled: boolean; // New prop
 }
 
 const createThreeGeometry = (definition: BlockDefinition): THREE.BufferGeometry => {
@@ -78,12 +80,15 @@ const createCannonShape = (definition: BlockDefinition): CANNON.Shape => {
     }
 };
 
+const AUTO_PLACEMENT_DELAY = 1000; // milliseconds, changed from 3000
+
 const GameScene: React.FC<GameSceneProps> = ({ 
   blockToPlace, 
   onGameOver, 
   onScoreUpdate, 
   isGameOver,
-  onBlockSuccessfullyPlaced 
+  onBlockSuccessfullyPlaced,
+  isDelegationEnabled, 
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -103,6 +108,7 @@ const GameScene: React.FC<GameSceneProps> = ({
   const isGameOverRef = useRef(isGameOver);
   const blockToPlaceRef = useRef(blockToPlace);
   const onBlockSuccessfullyPlacedRef = useRef(onBlockSuccessfullyPlaced);
+  const isDelegationEnabledRef = useRef(isDelegationEnabled);
 
   const maxAchievedHeightInGameRef = useRef<number>(0);
   const currentHighestBlockYRef = useRef<number>(GROUND_LEVEL);
@@ -113,15 +119,19 @@ const GameScene: React.FC<GameSceneProps> = ({
     isGameOverRef.current = isGameOver;
     blockToPlaceRef.current = blockToPlace;
     onBlockSuccessfullyPlacedRef.current = onBlockSuccessfullyPlaced;
-  }, [onGameOver, onScoreUpdate, isGameOver, blockToPlace, onBlockSuccessfullyPlaced]);
+    isDelegationEnabledRef.current = isDelegationEnabled;
+  }, [onGameOver, onScoreUpdate, isGameOver, blockToPlace, onBlockSuccessfullyPlaced, isDelegationEnabled]);
 
   const [isSceneReady, setIsSceneReady] = useState(false);
   const [canAddBlock, setCanAddBlock] = useState(true); 
   const [towerInstabilityVignetteStyle, setTowerInstabilityVignetteStyle] = useState<React.CSSProperties>({});
-  const [showHelpPanel, setShowHelpPanel] = useState<boolean>(false); // State for help panel visibility
+  const [showHelpPanel, setShowHelpPanel] = useState<boolean>(false); 
+
+  const [isAutoPlacing, setIsAutoPlacing] = useState(false);
+  const autoPlacementTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const cameraStateRef = useRef({
-    isDragging: false, // For mouse
+    isDragging: false, 
     lastMouseX: 0,
     lastMouseY: 0,
     lookAt: INITIAL_CAMERA_LOOK_AT_VECTOR.clone(),
@@ -131,10 +141,10 @@ const GameScene: React.FC<GameSceneProps> = ({
   });
 
   const touchStateRef = useRef({
-    isInteracting: false, // General flag for any touch interaction
-    isOrbiting: false,   // One-finger orbit
-    isPinching: false,  // Two-finger pinch for zoom
-    isP_anning: false,   // Two-finger drag for pan (renamed to avoid conflict with window.Panning)
+    isInteracting: false, 
+    isOrbiting: false,  
+    isPinching: false,  
+    isP_anning: false,   
     lastTouchX1: 0,
     lastTouchY1: 0,
     lastTouchX2: 0,
@@ -545,7 +555,7 @@ const GameScene: React.FC<GameSceneProps> = ({
     if (!worldRef.current || !sceneRef.current || !blockToPlaceRef.current || isGameOverRef.current || !canAddBlock || !ghostBlockRef.current) return;
 
     setCanAddBlock(false); 
-    setTimeout(() => setCanAddBlock(true), 200);
+    setTimeout(() => setCanAddBlock(true), 200); // Debounce adding blocks
 
     const definition = blockToPlaceRef.current;
     
@@ -607,7 +617,51 @@ const GameScene: React.FC<GameSceneProps> = ({
     setGhostBlockYRotation(0);
     onBlockSuccessfullyPlacedRef.current();
 
-  }, [canAddBlock]); 
+  }, [canAddBlock]); // Keep dependencies minimal for internalAddBlock
+
+
+  useEffect(() => {
+    // This effect handles the auto-placement timer
+    // It will re-run if any of its dependencies change, including ghostBlockXOffset or ghostBlockYRotation
+    if (isDelegationEnabledRef.current && !isGameOverRef.current && canAddBlock && blockToPlaceRef.current && isSceneReady) {
+      if (autoPlacementTimerRef.current) {
+        clearTimeout(autoPlacementTimerRef.current);
+      }
+      setIsAutoPlacing(true); // Indicate that the system is preparing to auto-place
+      
+      autoPlacementTimerRef.current = setTimeout(() => {
+        // Re-check conditions inside timeout in case state changed during the delay
+        if (isDelegationEnabledRef.current && !isGameOverRef.current && canAddBlock && blockToPlaceRef.current && isSceneReady) {
+          internalAddBlock();
+        }
+        setIsAutoPlacing(false); // Reset status after attempting placement
+      }, AUTO_PLACEMENT_DELAY);
+
+    } else {
+      // If delegation is off, game over, or block can't be added, clear timer and reset status
+      if (autoPlacementTimerRef.current) {
+        clearTimeout(autoPlacementTimerRef.current);
+        autoPlacementTimerRef.current = null;
+      }
+      setIsAutoPlacing(false);
+    }
+
+    return () => { // Cleanup function for the effect
+      if (autoPlacementTimerRef.current) {
+        clearTimeout(autoPlacementTimerRef.current);
+      }
+    };
+  }, [
+    isDelegationEnabled, 
+    blockToPlace, 
+    canAddBlock, 
+    isGameOver, 
+    isSceneReady, 
+    internalAddBlock,
+    ghostBlockXOffset, // Timer resets if user moves the block horizontally
+    ghostBlockYRotation // Timer resets if user rotates the block
+  ]);
+
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     let cameraKeyHandled = true;
@@ -641,7 +695,12 @@ const GameScene: React.FC<GameSceneProps> = ({
         break;
         case ' ': 
         case 'enter':
-        internalAddBlock();
+        if (!isDelegationEnabledRef.current) { // Only allow manual placement if delegation is OFF
+            internalAddBlock();
+        } else {
+            // Feedback that manual placement is disabled during delegation
+            console.log("Delegation mode active: Manual block placement via keyboard is disabled.");
+        }
         break;
         default:
         blockKeyHandled = false;
@@ -651,10 +710,10 @@ const GameScene: React.FC<GameSceneProps> = ({
     if (blockKeyHandled) {
         event.preventDefault();
     }
-  }, [isSceneReady, internalAddBlock]); 
+  }, [isSceneReady, internalAddBlock, isDelegationEnabled]); // Added isDelegationEnabled
 
   const handleMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || touchStateRef.current.isInteracting) return; // Ignore if touch is active
+    if (event.button !== 0 || touchStateRef.current.isInteracting) return; 
     cameraStateRef.current.isDragging = true;
     cameraStateRef.current.lastMouseX = event.clientX;
     cameraStateRef.current.lastMouseY = event.clientY;
@@ -664,7 +723,7 @@ const GameScene: React.FC<GameSceneProps> = ({
   }, []);
 
   const handleMouseMove = useCallback((event: MouseEvent) => {
-    if (!cameraStateRef.current.isDragging || touchStateRef.current.isInteracting) return; // Ignore if touch is active
+    if (!cameraStateRef.current.isDragging || touchStateRef.current.isInteracting) return; 
 
     const deltaX = event.clientX - cameraStateRef.current.lastMouseX;
     const deltaY = event.clientY - cameraStateRef.current.lastMouseY;
@@ -679,13 +738,13 @@ const GameScene: React.FC<GameSceneProps> = ({
 
   const handleMouseUp = useCallback(() => {
     cameraStateRef.current.isDragging = false;
-    if (mountRef.current && !touchStateRef.current.isInteracting) { // Only change cursor if not in touch mode
+    if (mountRef.current && !touchStateRef.current.isInteracting) { 
       mountRef.current.style.cursor = 'grab';
     }
   }, []);
 
   const handleWheel = useCallback((event: WheelEvent) => {
-    if (touchStateRef.current.isInteracting) return; // Ignore if touch is active
+    if (touchStateRef.current.isInteracting) return; 
     cameraStateRef.current.radius += event.deltaY * CAMERA_ZOOM_SPEED;
     cameraStateRef.current.radius = Math.max(CAMERA_MIN_ZOOM_DISTANCE, Math.min(CAMERA_MAX_ZOOM_DISTANCE, cameraStateRef.current.radius));
     event.preventDefault(); 
@@ -698,7 +757,7 @@ const GameScene: React.FC<GameSceneProps> = ({
     const cs = cameraStateRef.current;
 
     ts.isInteracting = true;
-    cs.isDragging = false; // Disable mouse dragging
+    cs.isDragging = false; 
     mountRef.current.style.cursor = 'default';
 
     if (touches.length === 1) {
@@ -708,20 +767,20 @@ const GameScene: React.FC<GameSceneProps> = ({
         ts.lastTouchX1 = touches[0].clientX;
         ts.lastTouchY1 = touches[0].clientY;
     } else if (touches.length === 2) {
-        event.preventDefault(); // Essential for two-finger gestures
+        event.preventDefault(); 
         ts.isOrbiting = false;
-        // Initial state for two fingers, move will determine pinch or pan
+        
         const dx = touches[0].clientX - touches[1].clientX;
         const dy = touches[0].clientY - touches[1].clientY;
         ts.initialPinchDistance = Math.sqrt(dx * dx + dy * dy);
-        ts.lastTouchX1 = touches[0].clientX; // Store individual points for pinch delta calc
+        ts.lastTouchX1 = touches[0].clientX; 
         ts.lastTouchY1 = touches[0].clientY;
         ts.lastTouchX2 = touches[1].clientX;
         ts.lastTouchY2 = touches[1].clientY;
         
         ts.initialPanMidX = (touches[0].clientX + touches[1].clientX) / 2;
         ts.initialPanMidY = (touches[0].clientY + touches[1].clientY) / 2;
-        // Default to pan, pinch can override if distance changes significantly
+        
         ts.isP_anning = true; 
         ts.isPinching = false;
     }
@@ -729,7 +788,7 @@ const GameScene: React.FC<GameSceneProps> = ({
 
   const handleTouchMove = useCallback((event: TouchEvent) => {
     if (!mountRef.current || !touchStateRef.current.isInteracting) return;
-    event.preventDefault(); // Prevent scrolling during touch interactions on canvas
+    event.preventDefault(); 
 
     const touches = event.touches;
     const ts = touchStateRef.current;
@@ -739,7 +798,7 @@ const GameScene: React.FC<GameSceneProps> = ({
         const deltaX = touches[0].clientX - ts.lastTouchX1;
         const deltaY = touches[0].clientY - ts.lastTouchY1;
 
-        cs.theta -= deltaX * CAMERA_ROTATION_SPEED_X * 0.75; // Adjusted sensitivity for touch
+        cs.theta -= deltaX * CAMERA_ROTATION_SPEED_X * 0.75; 
         cs.phi -= deltaY * CAMERA_ROTATION_SPEED_Y * 0.75;
         cs.phi = Math.max(CAMERA_MIN_POLAR_ANGLE, Math.min(CAMERA_MAX_POLAR_ANGLE, cs.phi));
 
@@ -750,20 +809,17 @@ const GameScene: React.FC<GameSceneProps> = ({
         const t0 = touches[0];
         const t1 = touches[1];
 
-        // Pinch-to-Zoom
         const dx = t0.clientX - t1.clientX;
         const dy = t0.clientY - t1.clientY;
         const currentPinchDistance = Math.sqrt(dx * dx + dy * dy);
         const pinchDelta = currentPinchDistance - ts.initialPinchDistance;
 
-        // Two-finger Pan
         const currentPanMidX = (t0.clientX + t1.clientX) / 2;
         const currentPanMidY = (t0.clientY + t1.clientY) / 2;
         const panDeltaX = currentPanMidX - ts.initialPanMidX;
         const panDeltaY = currentPanMidY - ts.initialPanMidY; 
 
-        const pinchThreshold = 2; // Pixels change in distance to activate pinch
-        const panThreshold = 2; // Pixels change in midpoint to activate pan
+        const pinchThreshold = 2; 
         
         if (!ts.isPinching && !ts.isP_anning) { 
             if (Math.abs(pinchDelta) > Math.max(Math.abs(panDeltaX), Math.abs(panDeltaY)) && Math.abs(pinchDelta) > pinchThreshold) {
@@ -776,7 +832,7 @@ const GameScene: React.FC<GameSceneProps> = ({
         }
         
         if (ts.isPinching) {
-             cs.radius -= (currentPinchDistance - ts.initialPinchDistance) * CAMERA_ZOOM_SPEED * 15; // Adjusted sensitivity
+             cs.radius -= (currentPinchDistance - ts.initialPinchDistance) * CAMERA_ZOOM_SPEED * 15; 
              cs.radius = Math.max(CAMERA_MIN_ZOOM_DISTANCE, Math.min(CAMERA_MAX_ZOOM_DISTANCE, cs.radius));
              ts.initialPinchDistance = currentPinchDistance;
         } else if (ts.isP_anning) {
@@ -925,7 +981,7 @@ const GameScene: React.FC<GameSceneProps> = ({
           <ul className="list-disc list-inside ml-1 text-xs space-y-0.5">
             <li>블록 이동: ← →</li>
             <li>블록 회전: R (세밀: Shift+R)</li>
-            <li>블록 놓기: 스페이스 / 엔터</li>
+            <li>블록 놓기: 스페이스 / 엔터 (위임 모드 비활성 시)</li>
             <li>카메라 회전: 마우스 드래그</li>
             <li>카메라 줌: 마우스 휠</li>
             <li>카메라 이동 (중심점): W,A,S,D</li>
@@ -936,6 +992,7 @@ const GameScene: React.FC<GameSceneProps> = ({
             <li>카메라 줌: 두 손가락 핀치</li>
             <li>카메라 이동 (중심점): 두 손가락 드래그</li>
             <li>블록 이동/회전: 화면 하단 버튼 사용</li>
+            <li>블록 놓기: 중앙 하단 버튼 (위임 모드 비활성 시)</li>
           </ul>
           <div className="mt-2 pt-2 border-t border-white/20">
             <p className="font-semibold mb-1 text-xs">카메라 프리셋:</p>
@@ -952,16 +1009,18 @@ const GameScene: React.FC<GameSceneProps> = ({
       {!isGameOver && isSceneReady && blockToPlace && (
         <>
           <button
-              onClick={internalAddBlock}
-              disabled={!canAddBlock}
-              className="absolute bottom-5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-green-400 to-blue-500 hover:from-green-500 hover:to-blue-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-3 px-8 rounded-full shadow-xl transition-all duration-200 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300 focus:ring-opacity-50 z-10"
-              aria-label="현재 블록 놓기 (Space 또는 Enter 키로도 가능)"
-              title="Space 또는 Enter 키로도 블록을 놓을 수 있습니다."
+              onClick={!isDelegationEnabled ? internalAddBlock : undefined}
+              disabled={!canAddBlock || isDelegationEnabled}
+              className="absolute bottom-5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-green-400 to-blue-500 hover:from-green-500 hover:to-blue-600 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-8 rounded-full shadow-xl transition-all duration-200 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300 focus:ring-opacity-50 z-10"
+              aria-label={isDelegationEnabled ? "위임 모드 활성 중, 자동 배치 대기" : "현재 블록 놓기 (Space 또는 Enter 키로도 가능)"}
+              title={isDelegationEnabled ? "위임 모드가 활성화되어 블록이 자동으로 배치됩니다." : "Space 또는 Enter 키로도 블록을 놓을 수 있습니다."}
           >
-            블록 놓기!
+            {isDelegationEnabled 
+              ? (isAutoPlacing ? "자동 배치 준비..." : "위임 모드 활성") 
+              : "블록 놓기!"}
           </button>
 
-          {/* Mobile Block Controls */}
+          {/* Mobile Block Controls: Movement and rotation controls should still be active */}
           <div className="absolute bottom-5 left-5 flex space-x-2 z-10">
             <button 
               onClick={() => setGhostBlockXOffset(prev => prev - GHOST_BLOCK_X_MOVEMENT_STEP)}
