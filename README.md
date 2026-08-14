@@ -2,7 +2,9 @@
 
 **다양한 모양의 블록을 중력을 거슬러 최대한 높이 쌓는 3D 물리 기반 게임입니다. 블록이 무너지지 않고 가장 높은 탑을 쌓아 최고 점수를 달성하세요!**
 
-실행 주소 : https://dev-canvas-pi.vercel.app/
+라이브 데모 : https://sigco3111.github.io/wobbly-tower/
+
+> **호스팅 이력**: 본 프로젝트는 Vercel에서 GitHub Pages로 이관되었습니다 (2026-08). 과거 Vercel alias는 더 이상 유효하지 않으므로 위 Pages URL을 사용해 주세요.
 
 ## 목차
 
